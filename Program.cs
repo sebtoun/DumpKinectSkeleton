@@ -1,10 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.Kinect;
 
 namespace DumpKinectSkeleton
@@ -14,28 +12,53 @@ namespace DumpKinectSkeleton
         /// <summary>
         /// Active Kinect sensor
         /// </summary>
-        private static KinectSensor kinectSensor = null;
+        private static KinectSensor _kinectSensor;
 
         /// <summary>
         /// Reader for body frames
         /// </summary>
-        private static BodyFrameReader bodyFrameReader = null;
+        private static BodyFrameReader _bodyFrameReader;
 
         /// <summary>
         /// Array for the bodies
         /// </summary>
-        private static Body[] bodies = null;
+        private static Body[] _bodies;
 
         /// <summary>
         /// Output file stream
         /// </summary>
-        private static StreamWriter outputStream = null;
+        private static StreamWriter _outputStream;
+
+        /// <summary>
+        /// Status display timer
+        /// </summary>
+        private static Timer _timer;
+
+        /// <summary>
+        /// Status synchronization lock
+        /// </summary>
+        private static readonly object Lock = new object();
+
+        /// <summary>
+        /// Frames counter
+        /// </summary>
+        private static int _frameCount;
+
+        /// <summary>
+        /// Last time status was displayed
+        /// </summary>
+        private static DateTime _timeLastFrame = DateTime.Now;
+
+        /// <summary>
+        /// Body seen by kinect flag
+        /// </summary>
+        private static bool _bodyCaptured;
 
         static void Main( string[] args )
         {
             // one sensor is currently supported
-            kinectSensor = KinectSensor.GetDefault();
-            if (kinectSensor == null)
+            _kinectSensor = KinectSensor.GetDefault();
+            if (_kinectSensor == null)
             {
                 Console.Error.WriteLine( "Error getting Kinect Sensor." );
                 Close();
@@ -43,8 +66,8 @@ namespace DumpKinectSkeleton
             }
 
             // open the reader for the body frames
-            bodyFrameReader = kinectSensor.BodyFrameSource.OpenReader();
-            if (bodyFrameReader == null)
+            _bodyFrameReader = _kinectSensor.BodyFrameSource.OpenReader();
+            if (_bodyFrameReader == null)
             {
                 Console.Error.WriteLine("Error opening body frame reader.");
                 Close();
@@ -55,7 +78,9 @@ namespace DumpKinectSkeleton
             var outputFileName = args.Length > 0 ? args[0] : "kinect_output.csv";
             try
             {
-                outputStream = new StreamWriter(outputFileName);
+                _outputStream = new StreamWriter(outputFileName);
+                // write header
+                _outputStream.WriteLine("# timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state");
             }
             catch (Exception e)
             {
@@ -65,16 +90,34 @@ namespace DumpKinectSkeleton
             }
 
             // register to body frames
-            bodyFrameReader.FrameArrived += FrameArrived;
+            _bodyFrameReader.FrameArrived += FrameArrived;
+
+            Console.WriteLine($"{DateTime.Now:T}: Starting capture in file {outputFileName}");
+            _timeLastFrame = DateTime.Now;
+
+            // write status in console
+            _timer = new Timer(o =>
+            {
+                double fps;
+                var now = DateTime.Now;
+                bool body;
+                lock (Lock)
+                {
+                    fps = _frameCount / (now - _timeLastFrame).TotalSeconds;
+                    _frameCount = 0;
+                    _timeLastFrame = now;
+                    body = _bodyCaptured;
+                }
+                Console.Write($"\rAcquiring at {fps:F1} fps. Tracking {(body ? 1 : 0)} body.");
+            }, null, 1000, 1000);
 
             // open the sensor
-            kinectSensor.Open();
+            _kinectSensor.Open();
 
             // wait for X, Q or Ctrl+C events
-            Console.CancelKeyPress += new ConsoleCancelEventHandler( ConsoleHandler );
+            Console.CancelKeyPress += ConsoleHandler;
             while (true)
-            {
-                
+            {                
                 // Start a console read operation. Do not display the input.
                 var cki = Console.ReadKey( true );
 
@@ -84,6 +127,7 @@ namespace DumpKinectSkeleton
                     break;
                 }
             }
+            Console.WriteLine(Environment.NewLine + $"{DateTime.Now:T}: Stoping capture");
             Close();
         }
 
@@ -94,33 +138,34 @@ namespace DumpKinectSkeleton
         /// <param name="args">event arguments</param>
         private static void ConsoleHandler(object sender, ConsoleCancelEventArgs args)
         {
-            args.Cancel = true;
+            Console.WriteLine(Environment.NewLine + $"{DateTime.Now:T}: Stoping capture");
+            Close();
         }
 
         /// <summary>
         /// Execute shutdown tasks
         /// </summary>
-        /// <param name="sender">object sending the event</param>
-        /// <param name="e">event arguments</param>
         private static void Close()
         {
-            if (bodyFrameReader != null)
+            _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+            if (_bodyFrameReader != null)
             {
                 // BodyFrameReader is IDisposable
-                bodyFrameReader.Dispose();
-                bodyFrameReader = null;
+                _bodyFrameReader.Dispose();
+                _bodyFrameReader = null;
             }
 
-            if (kinectSensor != null)
+            if (_kinectSensor != null)
             {
-                kinectSensor.Close();
-                kinectSensor = null;
+                _kinectSensor.Close();
+                _kinectSensor = null;
             }
 
-            if (outputStream != null)
+            if (_outputStream != null)
             {
-                outputStream.Close();
-                outputStream = null;
+                _outputStream.Close();
+                _outputStream = null;
             }
         }
 
@@ -139,43 +184,55 @@ namespace DumpKinectSkeleton
                 if (bodyFrame != null)
                 {
                     time = bodyFrame.RelativeTime;
-                    if (bodies == null)
+                    if (_bodies == null)
                     {
-                        bodies = new Body[bodyFrame.BodyCount];
+                        _bodies = new Body[bodyFrame.BodyCount];
                     }
 
                     // The first time GetAndRefreshBodyData is called, Kinect will allocate each Body in the array.
                     // As long as those body objects are not disposed and not set to null in the array,
                     // those body objects will be re-used.
-                    bodyFrame.GetAndRefreshBodyData( bodies );
+                    bodyFrame.GetAndRefreshBodyData( _bodies );
                     dataReceived = true;
                 }
             }
 
             if (dataReceived)
             {
-                var body = bodies.FirstOrDefault( b => b.IsTracked );
+                var body = _bodies.FirstOrDefault( b => b.IsTracked );
+                lock (Lock)
+                {
+                    _frameCount++;
+                    _bodyCaptured = body != null;
+                }
                 if (body != null)
                 {
                     OutputBody(time, body);
-                }
+                }                                
             }
         }
 
         /// <summary>
-        /// Output skeleton data to output file with [timestamp, joint id, x, y, z].
+        /// Output skeleton data to output file as [timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state].
         /// </summary>
         /// <param name="timestamp"></param>
         /// <param name="body"></param>
         static void OutputBody(TimeSpan timestamp, Body body)
         {
             var joints = body.Joints;
+            var orientations = body.JointOrientations;
 
             // see https://msdn.microsoft.com/en-us/library/microsoft.kinect.jointtype.aspx for jointType Description
             foreach (var jointType in joints.Keys)
             {
                 var position = joints[jointType].Position;
-                outputStream.WriteLine(string.Format(CultureInfo.InvariantCulture.NumberFormat, "{0}, {1}, {2}, {3}, {4}", timestamp.TotalMilliseconds, (int)jointType, position.X, position.Y, position.Z));
+                var orientation = orientations[jointType].Orientation;
+                _outputStream.WriteLine(string.Format(CultureInfo.InvariantCulture.NumberFormat, "{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}", 
+                    timestamp.TotalMilliseconds, 
+                    (int)jointType, 
+                    position.X, position.Y, position.Z,
+                    orientation.X, orientation.Y, orientation.Z, orientation.W,
+                    (int)joints[jointType].TrackingState));
             }
         }
     }
