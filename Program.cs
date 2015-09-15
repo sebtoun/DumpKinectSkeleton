@@ -92,7 +92,8 @@ namespace DumpKinectSkeleton
             // register to body frames
             _bodyFrameReader.FrameArrived += FrameArrived;
 
-            Console.WriteLine($"{DateTime.Now:T}: Starting capture in file {outputFileName}");
+            Console.WriteLine($"{DateTime.Now:T}: Starting capture in file {outputFileName}. Press X, Q or Control+C to stop capture.");
+
             _timeLastFrame = DateTime.Now;
 
             // write status in console
