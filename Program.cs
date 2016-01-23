@@ -7,17 +7,21 @@ using Microsoft.Kinect;
 
 namespace DumpKinectSkeleton
 {
-    class Program
+    internal class Program
     {
+        private const string DefaultKinectDataOutputFile = "kinect_output.csv";
+        private const string DefaultColorDataOutputMultiFile = "color_output_{0:D4}.raw";
+        private const string DefaultColorDataOutputFile = "color_output.yuv";
+
         /// <summary>
         /// Active Kinect sensor
         /// </summary>
         private static KinectSensor _kinectSensor;
 
         /// <summary>
-        /// Reader for body frames
+        /// Reader for multi sources sync'ed frames
         /// </summary>
-        private static BodyFrameReader _bodyFrameReader;
+        private static MultiSourceFrameReader _frameReader;
 
         /// <summary>
         /// Array for the bodies
@@ -25,9 +29,21 @@ namespace DumpKinectSkeleton
         private static Body[] _bodies;
 
         /// <summary>
-        /// Output file stream
+        /// Array storing latest color frame pixels.
         /// </summary>
-        private static StreamWriter _outputStream;
+        private static byte[] _colorFrameBytes;
+
+        /// <summary>
+        /// Counter for color frames output files.
+        /// </summary>
+        private static int _absoluteFrameCounter = 0;
+
+        /// <summary>
+        /// Body output file stream
+        /// </summary>
+        private static StreamWriter _bodyOutputStream;
+
+        private static Stream _colorOutputStream;
 
         /// <summary>
         /// Status display timer
@@ -54,11 +70,11 @@ namespace DumpKinectSkeleton
         /// </summary>
         private static bool _bodyCaptured;
 
-        static void Main( string[] args )
+        private static void Main( string[] args )
         {
             // one sensor is currently supported
             _kinectSensor = KinectSensor.GetDefault();
-            if (_kinectSensor == null)
+            if ( _kinectSensor == null )
             {
                 Console.Error.WriteLine( "Error getting Kinect Sensor." );
                 Close();
@@ -66,69 +82,73 @@ namespace DumpKinectSkeleton
             }
 
             // open the reader for the body frames
-            _bodyFrameReader = _kinectSensor.BodyFrameSource.OpenReader();
-            if (_bodyFrameReader == null)
+            _frameReader = _kinectSensor.OpenMultiSourceFrameReader( FrameSourceTypes.Body | FrameSourceTypes.Color );
+            if ( _frameReader == null )
             {
-                Console.Error.WriteLine("Error opening body frame reader.");
+                Console.Error.WriteLine( "Error opening body frame reader." );
                 Close();
                 return;
             }
-            
+
             // open file for output
-            var outputFileName = args.Length > 0 ? args[0] : "kinect_output.csv";
+            var bodyOutputFileName = args.Length > 0 ? args[ 0 ] : DefaultKinectDataOutputFile;
             try
             {
-                _outputStream = new StreamWriter(outputFileName);
+                _bodyOutputStream = new StreamWriter( bodyOutputFileName );
+                _colorOutputStream = new FileStream( string.Format( DefaultColorDataOutputFile, _absoluteFrameCounter ), FileMode.Create );
+
                 // write header
-                _outputStream.WriteLine("# timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state");
+                _bodyOutputStream.WriteLine(
+                    "# timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state" );
             }
-            catch (Exception e)
+            catch ( Exception e )
             {
-                Console.Error.WriteLine("Error opening output file: " + e.Message);
+                Console.Error.WriteLine( "Error opening output file(s): " + e.Message );
                 Close();
                 return;
             }
 
             // register to body frames
-            _bodyFrameReader.FrameArrived += FrameArrived;
+            _frameReader.MultiSourceFrameArrived += FrameArrived;
 
-            Console.WriteLine($"{DateTime.Now:T}: Starting capture in file {outputFileName}. Press X, Q or Control+C to stop capture.");
-
+            Console.WriteLine(
+                $"{DateTime.Now:T}: Starting capture in file {bodyOutputFileName}. Capturing video @{_kinectSensor.ColorFrameSource.FrameDescription.Width}x{_kinectSensor.ColorFrameSource.FrameDescription.Height}. Press X, Q or Control+C to stop capture." );
+            
             _timeLastFrame = DateTime.Now;
 
             // write status in console
-            _timer = new Timer(o =>
+            _timer = new Timer( o =>
             {
                 double fps;
                 var now = DateTime.Now;
                 bool body;
-                lock (Lock)
+                lock ( Lock )
                 {
-                    fps = _frameCount / (now - _timeLastFrame).TotalSeconds;
+                    fps = _frameCount / ( now - _timeLastFrame ).TotalSeconds;
                     _frameCount = 0;
                     _timeLastFrame = now;
                     body = _bodyCaptured;
                 }
-                Console.Write($"\rAcquiring at {fps:F1} fps. Tracking {(body ? 1 : 0)} body.");
-            }, null, 1000, 1000);
+                Console.Write( $"\rAcquiring at {fps:F1} fps. Tracking {( body ? 1 : 0 )} body." );
+            }, null, 1000, 1000 );
 
             // open the sensor
             _kinectSensor.Open();
 
             // wait for X, Q or Ctrl+C events
             Console.CancelKeyPress += ConsoleHandler;
-            while (true)
-            {                
+            while ( true )
+            {
                 // Start a console read operation. Do not display the input.
                 var cki = Console.ReadKey( true );
 
                 // Exit if the user pressed the 'X', 'Q' or ControlC key. 
-                if (cki.Key == ConsoleKey.X || cki.Key == ConsoleKey.Q)
+                if ( cki.Key == ConsoleKey.X || cki.Key == ConsoleKey.Q )
                 {
                     break;
                 }
             }
-            Console.WriteLine(Environment.NewLine + $"{DateTime.Now:T}: Stoping capture");
+            Console.WriteLine( Environment.NewLine + $"{DateTime.Now:T}: Stoping capture" );
             Close();
         }
 
@@ -137,9 +157,9 @@ namespace DumpKinectSkeleton
         /// </summary>
         /// <param name="sender">object sending the event</param>
         /// <param name="args">event arguments</param>
-        private static void ConsoleHandler(object sender, ConsoleCancelEventArgs args)
+        private static void ConsoleHandler( object sender, ConsoleCancelEventArgs args )
         {
-            Console.WriteLine(Environment.NewLine + $"{DateTime.Now:T}: Stoping capture");
+            Console.WriteLine( Environment.NewLine + $"{DateTime.Now:T}: Stoping capture" );
             Close();
         }
 
@@ -148,25 +168,31 @@ namespace DumpKinectSkeleton
         /// </summary>
         private static void Close()
         {
-            _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+            _timer?.Change( Timeout.Infinite, Timeout.Infinite );
 
-            if (_bodyFrameReader != null)
+            if ( _frameReader != null )
             {
                 // BodyFrameReader is IDisposable
-                _bodyFrameReader.Dispose();
-                _bodyFrameReader = null;
+                _frameReader.Dispose();
+                _frameReader = null;
             }
 
-            if (_kinectSensor != null)
+            if ( _kinectSensor != null )
             {
                 _kinectSensor.Close();
                 _kinectSensor = null;
             }
 
-            if (_outputStream != null)
+            if ( _bodyOutputStream != null )
             {
-                _outputStream.Close();
-                _outputStream = null;
+                _bodyOutputStream.Close();
+                _bodyOutputStream = null;
+            }
+
+            if ( _colorOutputStream != null )
+            {
+                _colorOutputStream.Close();
+                _colorOutputStream = null;
             }
         }
 
@@ -175,41 +201,59 @@ namespace DumpKinectSkeleton
         /// </summary>
         /// <param name="sender">object sending the event</param>
         /// <param name="e">event arguments</param>
-        static void FrameArrived( object sender, BodyFrameArrivedEventArgs e )
+        private static void FrameArrived( object sender, MultiSourceFrameArrivedEventArgs e )
         {
             var dataReceived = false;
             var time = new TimeSpan();
 
-            using (var bodyFrame = e.FrameReference.AcquireFrame())
+            var frame = e.FrameReference.AcquireFrame();
+            if ( frame != null )
             {
-                if (bodyFrame != null)
+                using ( var bodyFrame = frame.BodyFrameReference.AcquireFrame() )
+                using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() )
                 {
                     time = bodyFrame.RelativeTime;
-                    if (_bodies == null)
+                    if ( _bodies == null )
                     {
-                        _bodies = new Body[bodyFrame.BodyCount];
+                        _bodies = new Body[ bodyFrame.BodyCount ];
+                    }
+                    if ( _colorFrameBytes == null )
+                    {
+                        _colorFrameBytes =
+                            new byte[
+                                colorFrame.FrameDescription.LengthInPixels * colorFrame.FrameDescription.BytesPerPixel];
                     }
 
                     // The first time GetAndRefreshBodyData is called, Kinect will allocate each Body in the array.
                     // As long as those body objects are not disposed and not set to null in the array,
                     // those body objects will be re-used.
                     bodyFrame.GetAndRefreshBodyData( _bodies );
+                    if ( colorFrame.RawColorImageFormat != ColorImageFormat.Yuy2 )
+                    {
+                        colorFrame.CopyConvertedFrameDataToArray( _colorFrameBytes, ColorImageFormat.Yuy2 );
+                    }
+                    else
+                    {
+                        colorFrame.CopyRawFrameDataToArray( _colorFrameBytes );
+                    }                    
                     dataReceived = true;
                 }
             }
 
-            if (dataReceived)
+            if ( dataReceived )
             {
                 var body = _bodies.FirstOrDefault( b => b.IsTracked );
-                lock (Lock)
+                lock ( Lock )
                 {
                     _frameCount++;
                     _bodyCaptured = body != null;
                 }
-                if (body != null)
+                if ( body != null )
                 {
-                    OutputBody(time, body);
-                }                                
+                    OutputBody( time, body );
+                    OutputColorFrame( _colorFrameBytes );
+                    _absoluteFrameCounter++;
+                }
             }
         }
 
@@ -218,22 +262,59 @@ namespace DumpKinectSkeleton
         /// </summary>
         /// <param name="timestamp"></param>
         /// <param name="body"></param>
-        static void OutputBody(TimeSpan timestamp, Body body)
+        private static void OutputBody( TimeSpan timestamp, Body body )
         {
-            var joints = body.Joints;
-            var orientations = body.JointOrientations;
-
-            // see https://msdn.microsoft.com/en-us/library/microsoft.kinect.jointtype.aspx for jointType Description
-            foreach (var jointType in joints.Keys)
+            try
             {
-                var position = joints[jointType].Position;
-                var orientation = orientations[jointType].Orientation;
-                _outputStream.WriteLine(string.Format(CultureInfo.InvariantCulture.NumberFormat, "{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}", 
-                    timestamp.TotalMilliseconds, 
-                    (int)jointType, 
-                    position.X, position.Y, position.Z,
-                    orientation.X, orientation.Y, orientation.Z, orientation.W,
-                    (int)joints[jointType].TrackingState));
+                var joints = body.Joints;
+                var orientations = body.JointOrientations;
+
+                // see https://msdn.microsoft.com/en-us/library/microsoft.kinect.jointtype.aspx for jointType Description
+                foreach ( var jointType in joints.Keys )
+                {
+                    var position = joints[ jointType ].Position;
+                    var orientation = orientations[ jointType ].Orientation;
+                    _bodyOutputStream.WriteLine( string.Format( CultureInfo.InvariantCulture.NumberFormat,
+                        "{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}",
+                        timestamp.TotalMilliseconds,
+                        (int) jointType,
+                        position.X, position.Y, position.Z,
+                        orientation.X, orientation.Y, orientation.Z, orientation.W,
+                        (int) joints[ jointType ].TrackingState ) );
+                }
+            }
+            catch ( Exception e )
+            {
+                Console.Error.WriteLine( "Error writing to output file(s): " + e.Message );
+                Close();
+                return;
+            }
+        }
+
+        private static void OutputColorFrame( byte[] frame )
+        {
+            //try
+            //{
+            //    var colorOutputStream = new FileStream( string.Format( DefaultColorDataOutputMultiFile, _absoluteFrameCounter ), FileMode.Create );
+            //    colorOutputStream.Write( frame, 0, frame.Length );
+            //    colorOutputStream.Close();
+            //}
+            //catch ( Exception e )
+            //{
+            //    Console.Error.WriteLine( "Error opening output file(s): " + e.Message );
+            //    Close();
+            //    return;
+            //}
+
+            try
+            {                
+                _colorOutputStream.Write( frame, 0, frame.Length );
+            }
+            catch ( Exception e )
+            {
+                Console.Error.WriteLine( "Error writing to output file(s): " + e.Message );
+                Close();
+                return;
             }
         }
     }
