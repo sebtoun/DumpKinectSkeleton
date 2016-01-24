@@ -6,8 +6,8 @@ namespace DumpKinectSkeleton
 {
     internal class Program
     {
-        private const string DefaultBodyDataOutputFile = "kinect_output.csv";
-        private const string DefaultColorDataOutputFile = "color_output.yuv";
+        private const string BodyDataOutputFileSuffix = "_body.csv";
+        private const string ColorDataOutputFileSuffix = "_color.yuy2";
 
         /// <summary>
         /// Active Kinect sensor
@@ -39,7 +39,7 @@ namespace DumpKinectSkeleton
         /// </summary>
         private Timer _timer;
         
-        public void Run( bool dumpBodies, bool dumpVideo, string[] args )
+        public void Run( bool dumpBodies, bool dumpVideo, string baseOutputFile = "output" )
         {
             if ( !InitializeKinect( dumpBodies, dumpVideo ) )
             {
@@ -48,16 +48,15 @@ namespace DumpKinectSkeleton
             }
 
             // initialize dumpers
-            var bodyOutputFileName = args.Length > 0 ? args[ 0 ] : DefaultBodyDataOutputFile;
             try
             {
                 if ( dumpBodies )
                 {
-                    _bodyFrameDumper = new BodyFrameDumper( bodyOutputFileName );
+                    _bodyFrameDumper = new BodyFrameDumper( baseOutputFile + BodyDataOutputFileSuffix );
                 }
                 if ( dumpVideo )
                 {
-                    _colorFrameDumper = new ColorFrameDumper( DefaultColorDataOutputFile );
+                    _colorFrameDumper = new ColorFrameDumper( baseOutputFile + ColorDataOutputFileSuffix );
                 }
             }
             catch ( Exception e )
@@ -68,7 +67,7 @@ namespace DumpKinectSkeleton
             }
 
             Console.WriteLine(
-                $"{DateTime.Now:T}: Starting capture in file {bodyOutputFileName}. Capturing video @{_kinectSensor.ColorFrameSource.FrameDescription.Width}x{_kinectSensor.ColorFrameSource.FrameDescription.Height}. Press X, Q or Control+C to stop capture." );
+                $"{DateTime.Now:T}: Starting skeleton capture in file {baseOutputFile + BodyDataOutputFileSuffix}. Capturing video @{_kinectSensor.ColorFrameSource.FrameDescription.Width}x{_kinectSensor.ColorFrameSource.FrameDescription.Height} in file {baseOutputFile + ColorDataOutputFileSuffix}. Press X, Q or Control+C to stop capture." );
 
             // write status in console every seconds
             _fpsWatch = new FpsWatch();
@@ -226,7 +225,7 @@ namespace DumpKinectSkeleton
 
         public static void Main( string[] args )
         {
-            new Program().Run( true, true, args );
+            new Program().Run( true, true );
         }
     }
 }
