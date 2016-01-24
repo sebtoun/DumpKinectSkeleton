@@ -1,7 +1,4 @@
 ﻿using System;
-using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Threading;
 using Microsoft.Kinect;
 
@@ -9,7 +6,7 @@ namespace DumpKinectSkeleton
 {
     internal class Program
     {
-        private const string DefaultKinectDataOutputFile = "kinect_output.csv";
+        private const string DefaultBodyDataOutputFile = "kinect_output.csv";
         private const string DefaultColorDataOutputFile = "color_output.yuv";
 
         /// <summary>
@@ -23,57 +20,40 @@ namespace DumpKinectSkeleton
         private MultiSourceFrameReader _frameReader;
 
         /// <summary>
-        /// Array for the bodies
+        /// Dump body to file.
         /// </summary>
-        private Body[] _bodies;
+        private BodyFrameDumper _bodyFrameDumper;
 
         /// <summary>
-        /// Array storing latest color frame pixels.
+        /// Dump body to file.
         /// </summary>
-        private byte[] _colorFrameBytes;
+        private ColorFrameDumper _colorFrameDumper;
 
         /// <summary>
-        /// Body output file stream.
+        /// Compute capture rate.
         /// </summary>
-        private StreamWriter _bodyOutputStream;
-
-        /// <summary>
-        /// Color frames output file stream.
-        /// </summary>
-        private Stream _colorOutputStream;
+        private FpsWatch _fpsWatch;
 
         /// <summary>
         /// Status display timer
         /// </summary>
         private Timer _timer;
-
-        /// <summary>
-        /// Count frames between status update (for fps count).
-        /// </summary>
-        private float _frameCount;
-
+        
         /// <summary>
         /// Wether to dump Body data.
         /// </summary>
-        private bool _dumpSkeleton = true;
+        private bool _dumpBodies;
 
         /// <summary>
         /// Wether to dump Video (color) data.
         /// </summary>
-        private bool _dumpVideo = true;
+        private bool _dumpVideo;
 
-        /// <summary>
-        /// Status synchronization lock
-        /// </summary>
-        private readonly object _lock = new object();
-
-        /// <summary>
-        /// Body seen by kinect flag
-        /// </summary>
-        private bool _bodyCaptured;
-
-        public void Run( string[] args )
+        public void Run( bool dumpBodies, bool dumpVideo, string[] args )
         {
+            _dumpBodies = dumpBodies;
+            _dumpVideo = dumpVideo;
+
             // one sensor is currently supported
             _kinectSensor = KinectSensor.GetDefault();
             if ( _kinectSensor == null )
@@ -84,7 +64,7 @@ namespace DumpKinectSkeleton
             }
 
             var features = FrameSourceTypes.None;
-            if ( _dumpSkeleton )
+            if ( _dumpBodies )
             {
                 features |= FrameSourceTypes.Body;
             }
@@ -110,19 +90,15 @@ namespace DumpKinectSkeleton
             }
 
             // open file for output
-            var bodyOutputFileName = args.Length > 0 ? args[ 0 ] : DefaultKinectDataOutputFile;
+            var bodyOutputFileName = args.Length > 0 ? args[ 0 ] : DefaultBodyDataOutputFile;
             try
             {
-                _bodyOutputStream = new StreamWriter( bodyOutputFileName );
-                _colorOutputStream = new FileStream( DefaultColorDataOutputFile, FileMode.Create );
-
-                // write header
-                _bodyOutputStream.WriteLine(
-                    "# timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state" );
+                _bodyFrameDumper = new BodyFrameDumper( bodyOutputFileName );
+                _colorFrameDumper = new ColorFrameDumper( DefaultColorDataOutputFile );
             }
             catch ( Exception e )
             {
-                Console.Error.WriteLine( "Error opening output file(s): " + e.Message );
+                Console.Error.WriteLine( "Error preparing dumpers: " + e.Message );
                 Close();
                 return;
             }
@@ -132,23 +108,18 @@ namespace DumpKinectSkeleton
 
             Console.WriteLine(
                 $"{DateTime.Now:T}: Starting capture in file {bodyOutputFileName}. Capturing video @{_kinectSensor.ColorFrameSource.FrameDescription.Width}x{_kinectSensor.ColorFrameSource.FrameDescription.Height}. Press X, Q or Control+C to stop capture." );
-            
-            var timeLastStatus = DateTime.Now;
-            
+
+            _fpsWatch = new FpsWatch();
+
             // write status in console
             _timer = new Timer( o =>
             {
-                double fps;
-                var now = DateTime.Now;
-                bool body;
-                lock ( _lock )
+                var status = $"Acquiring at {_fpsWatch.GetFPS( true ):F1} fps.";
+                if ( _dumpBodies )
                 {
-                    fps = _frameCount / ( now - timeLastStatus ).TotalSeconds;
-                    _frameCount = 0;
-                    timeLastStatus = now;
-                    body = _bodyCaptured;
+                    status += $"Tracking {_bodyFrameDumper.BodyCount} body(ies).";
                 }
-                Console.Write( $"Acquiring at {fps:F1} fps. Tracking {( body ? 1 : 0 )} body.     \r" );
+                Console.Write(  status + "\r" );
             }, null, 1000, 1000 );
 
             // open the sensor
@@ -192,7 +163,6 @@ namespace DumpKinectSkeleton
 
             if ( _frameReader != null )
             {
-                // BodyFrameReader is IDisposable
                 _frameReader.Dispose();
                 _frameReader = null;
             }
@@ -203,17 +173,17 @@ namespace DumpKinectSkeleton
                 _kinectSensor = null;
             }
 
-            if ( _bodyOutputStream != null )
+            if ( _bodyFrameDumper != null )
             {
-                _bodyOutputStream.Close();
-                _bodyOutputStream = null;
+                _bodyFrameDumper.Close();
+                _bodyFrameDumper = null;
             }
 
-            if ( _colorOutputStream != null )
+            if ( _colorFrameDumper != null )
             {
-                _colorOutputStream.Close();
-                _colorOutputStream = null;
-            }            
+                _colorFrameDumper.Close();
+                _colorFrameDumper = null;
+            }
         }
 
         /// <summary>
@@ -223,133 +193,37 @@ namespace DumpKinectSkeleton
         /// <param name="e">event arguments</param>
         private void FrameArrived( object sender, MultiSourceFrameArrivedEventArgs e )
         {
-            var dataReceived = false;
-            var time = new TimeSpan();
-
             var frame = e.FrameReference.AcquireFrame();
-            if ( frame != null )
+            if ( frame == null ) return;
+
+            try
             {
+                if ( _dumpBodies )
+                {
+                    using ( var bodyFrame = frame.BodyFrameReference.AcquireFrame() )
+                    {
+
+                        _bodyFrameDumper.HandleBodyFrame( bodyFrame );
+                    }
+                }
                 if ( _dumpVideo )
                 {
                     using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() )
                     {
-                        if ( _colorFrameBytes == null )
-                        {
-                            _colorFrameBytes =
-                                new byte[
-                                    colorFrame.FrameDescription.LengthInPixels * colorFrame.FrameDescription.BytesPerPixel ];
-                        }
-
-                        if ( colorFrame.RawColorImageFormat != ColorImageFormat.Yuy2 )
-                        {
-                            colorFrame.CopyConvertedFrameDataToArray( _colorFrameBytes, ColorImageFormat.Yuy2 );
-                        }
-                        else
-                        {
-                            colorFrame.CopyRawFrameDataToArray( _colorFrameBytes );
-                        }
-                        dataReceived = true;
+                        _colorFrameDumper.HandleColorFrame( colorFrame );
                     }
                 }
-                if ( _dumpSkeleton )
-                {
-                    using ( var bodyFrame = frame.BodyFrameReference.AcquireFrame() )
-                    {
-                        time = bodyFrame.RelativeTime;
-                        if ( _bodies == null )
-                        {
-                            _bodies = new Body[ bodyFrame.BodyCount ];
-                        }
-                        
-                        // The first time GetAndRefreshBodyData is called, Kinect will allocate each Body in the array.
-                        // As long as those body objects are not disposed and not set to null in the array,
-                        // those body objects will be re-used.
-                        bodyFrame.GetAndRefreshBodyData( _bodies );
-                        dataReceived = true;
-                    }
-                }
+                _fpsWatch.Tick();
             }
-
-            if ( dataReceived )
+            catch ( Exception )
             {
-                if ( _dumpSkeleton )
-                {
-                    var body = _bodies.FirstOrDefault( b => b.IsTracked );
-                    _bodyCaptured = body != null;
-                    if ( body != null )
-                    {
-                        OutputBody( time, body );
-                        if ( _dumpVideo )
-                        {
-                            OutputColorFrame( _colorFrameBytes );                            
-                        }
-                    }
-                }
-                else if ( _dumpVideo )
-                {
-                    OutputColorFrame( _colorFrameBytes );
-                }
-
-                lock ( _lock )
-                {
-                    _frameCount++;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Output skeleton data to output file as [timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state].
-        /// </summary>
-        /// <param name="timestamp"></param>
-        /// <param name="body"></param>
-        private void OutputBody( TimeSpan timestamp, Body body )
-        {
-            try
-            {
-                var joints = body.Joints;
-                var orientations = body.JointOrientations;
-
-                // see https://msdn.microsoft.com/en-us/library/microsoft.kinect.jointtype.aspx for jointType Description
-                foreach ( var jointType in joints.Keys )
-                {
-                    var position = joints[ jointType ].Position;
-                    var orientation = orientations[ jointType ].Orientation;
-                    _bodyOutputStream.WriteLine( string.Format( CultureInfo.InvariantCulture.NumberFormat,
-                        "{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}",
-                        timestamp.TotalMilliseconds,
-                        (int) jointType,
-                        position.X, position.Y, position.Z,
-                        orientation.X, orientation.Y, orientation.Z, orientation.W,
-                        (int) joints[ jointType ].TrackingState ) );
-                }
-            }
-            catch ( Exception e )
-            {
-                Console.Error.WriteLine( "Error writing to output file(s): " + e.Message );
-                Close();
-            }
-        }
-
-        /// <summary>
-        /// Ouput color frame in yuy2 format in file.
-        /// </summary>
-        /// <param name="frame">the bytes representing the frame.</param>
-        private void OutputColorFrame( byte[] frame )
-        {
-            try
-            {                
-                _colorOutputStream.Write( frame, 0, frame.Length );
-            }
-            catch ( Exception e )
-            {
-                Console.Error.WriteLine( "Error writing to output file(s): " + e.Message );
-                Close();
+                // todo exit
             }
         }
 
         public static void Main( string[] args )
         {
-            new Program().Run( args );
+            new Program().Run( true, true, args );
         }
     }
 }
