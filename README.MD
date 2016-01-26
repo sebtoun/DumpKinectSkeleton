@@ -2,7 +2,7 @@
 
 ## Description
 
-Dumps joints data from the first kinect skeleton found int the following format:
+Dumps color camera stream and joints data from the first kinect skeleton found int the following format:
 
 ```Timestamp, JointID, Position.X, Position.Y, Position.Z, Orientation.X, Orientation.Y, Orientation.Z, Orientation.W, State```
 
@@ -18,7 +18,14 @@ You will need .Net framework 4.5 (available here : http://www.microsoft.com/en-u
 
 ## Usage
 
-First argument is output file, defaults to "kinect_output.csv"
+```Usage: DumpKinectSkeleton [--help] [-v|--video] [--prefix PREFIX]
+
+  -v, --video        Dump color video stream data as a yuy2 raw format.
+
+  --prefix=PREFIX    (Default: output) Output files prefix.
+
+  --help             Display this help screen.```
+
+Skeleton data is outputed to `<PREFIX>_body.csv` in commas separated values, video stream is outputed to `<PREFIX>_color.yuy2` in raw YUYV422 (a.k.a. YUY2) format.
 
 Press `Q`, `X` or `Control+C` to quit application.
-

@@ -43,34 +43,21 @@ namespace DumpKinectSkeleton
         /// </summary>
         private Timer _timer;
 
-        [Option( 's', "skeleton", DefaultValue = true, HelpText = "Dump skeleton data as a csv file." )]
-        public bool DumpBodies { get; set; }
-
-        [Option( 'v', "video", DefaultValue = false, HelpText = "Dump color video stream data as a yuy2 raw format." )]
+        [Option( 'v', "video", HelpText = "Dump color video stream data as a yuy2 raw format." )]
         public bool DumpVideo { get; set; }
 
-        [Option( "prefix", DefaultValue = "output", HelpText = "Output files prefix." )]
+        [Option( "prefix", DefaultValue = "output", MetaValue = "PREFIX", HelpText = "Output files prefix." )]
         public string BaseOutputFile { get; set; }
 
         [HelpOption]
         public string GetUsage()
         {
-            var help = new HelpText
-            {
-                Heading = new HeadingInfo( "DumpKinectSkeleton", "2.1.0" ),
-                Copyright = new CopyrightInfo( "Sébastien Andary", 2016 ),
-                AdditionalNewLineAfterOption = true,
-                AddDashesToOption = true
-            };
-            //help.AddPreOptionsLine( "<<license details here.>>" );
-            //help.AddPreOptionsLine( "Usage: app -p Someone" );
-            help.AddOptions( this );
-            return help;
+            return HelpText.AutoBuild( this, ( HelpText current ) => HelpText.DefaultParsingErrorsHandler( this, current ) );
         }
 
         public void Run()
         {
-            if ( !InitializeKinect( DumpBodies, DumpVideo ) )
+            if ( !InitializeKinect( DumpVideo ) )
             {
                 Close();
                 return;
@@ -79,10 +66,7 @@ namespace DumpKinectSkeleton
             // initialize dumpers
             try
             {
-                if ( DumpBodies )
-                {
-                    _bodyFrameDumper = new BodyFrameDumper( BaseOutputFile + BodyDataOutputFileSuffix );
-                }
+                _bodyFrameDumper = new BodyFrameDumper( BaseOutputFile + BodyDataOutputFileSuffix );
                 if ( DumpVideo )
                 {
                     _colorFrameDumper = new ColorFrameDumper( BaseOutputFile + ColorDataOutputFileSuffix );
@@ -96,10 +80,7 @@ namespace DumpKinectSkeleton
             }
 
             Console.WriteLine( "Starting capture." );
-            if ( DumpBodies )
-            {
-                Console.WriteLine( $"Ouput skeleton data in file {BaseOutputFile + BodyDataOutputFileSuffix}." );
-            }
+            Console.WriteLine( $"Ouput skeleton data in file {BaseOutputFile + BodyDataOutputFileSuffix}." );
             if ( DumpVideo )
             {
                 Console.WriteLine( $"Video stream @{_kinectSensor.ColorFrameSource.FrameDescription.Width}x{_kinectSensor.ColorFrameSource.FrameDescription.Height} outputed in file {BaseOutputFile + ColorDataOutputFileSuffix}." );
@@ -112,10 +93,7 @@ namespace DumpKinectSkeleton
             _timer = new Timer( o =>
             {
                 Console.Write( $"Acquiring at {_fpsWatch.GetFPS( true ):F1} fps." );
-                if ( DumpBodies )
-                {
-                    Console.Write( $" Tracking {_bodyFrameDumper.BodyCount} body(ies)." );
-                }
+                Console.Write( $" Tracking {_bodyFrameDumper.BodyCount} body(ies)." );
                 Console.Write( "\r" );
             }, null, 1000, 1000 );
 
@@ -150,7 +128,7 @@ namespace DumpKinectSkeleton
         /// <param name="dumpBodies"></param>
         /// <param name="dumpVideo"></param>
         /// <returns></returns>
-        private bool InitializeKinect( bool dumpBodies, bool dumpVideo )
+        private bool InitializeKinect( bool dumpVideo )
         {
             _kinectSensor = KinectSensor.GetDefault();
             if ( _kinectSensor == null )
@@ -159,11 +137,7 @@ namespace DumpKinectSkeleton
                 return false;
             }
 
-            var features = FrameSourceTypes.None;
-            if ( dumpBodies )
-            {
-                features |= FrameSourceTypes.Body;
-            }
+            var features = FrameSourceTypes.Body;
             if ( dumpVideo )
             {
                 features |= FrameSourceTypes.Color;
