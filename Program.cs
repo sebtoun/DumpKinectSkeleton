@@ -13,15 +13,7 @@ namespace DumpKinectSkeleton
         private const string BodyDataOutputFileSuffix = "_body.csv";
         private const string ColorDataOutputFileSuffix = "_color.yuy2";
 
-        /// <summary>
-        /// Active Kinect sensor
-        /// </summary>
-        private KinectSensor _kinectSensor;
-
-        /// <summary>
-        /// Reader for multi sources sync'ed frames
-        /// </summary>
-        private MultiSourceFrameReader _frameReader;
+        private KinectSource _kinectSource;
 
         /// <summary>
         /// Dump body to file.
@@ -32,12 +24,7 @@ namespace DumpKinectSkeleton
         /// Dump body to file.
         /// </summary>
         private ColorFrameDumper _colorFrameDumper;
-
-        /// <summary>
-        /// Compute capture rate.
-        /// </summary>
-        private FpsWatch _fpsWatch;
-
+        
         /// <summary>
         /// Status display timer
         /// </summary>
@@ -57,19 +44,29 @@ namespace DumpKinectSkeleton
 
         public void Run()
         {
-            if ( !InitializeKinect( DumpVideo ) )
+            try
             {
-                Close();
+                _kinectSource = new KinectSource();
+                _kinectSource.FrameProcessExceptionEvent += e =>
+                {
+                    Console.Error.WriteLine( "Error: " + e.Message );
+                    Terminate();
+                };                
+            }
+            catch ( Exception e )
+            {
+                Console.Error.WriteLine( "Error initializing Kinect: " + e.Message );
+                Cleanup();
                 return;
             }
 
             // initialize dumpers
             try
             {
-                _bodyFrameDumper = new BodyFrameDumper( BaseOutputFile + BodyDataOutputFileSuffix );
+                _bodyFrameDumper = new BodyFrameDumper( _kinectSource, BaseOutputFile + BodyDataOutputFileSuffix );
                 if ( DumpVideo )
                 {
-                    _colorFrameDumper = new ColorFrameDumper( BaseOutputFile + ColorDataOutputFileSuffix );
+                    _colorFrameDumper = new ColorFrameDumper( _kinectSource, BaseOutputFile + ColorDataOutputFileSuffix );
                 }
             }
             catch ( Exception e )
@@ -83,25 +80,24 @@ namespace DumpKinectSkeleton
             Console.WriteLine( $"Ouput skeleton data in file {BaseOutputFile + BodyDataOutputFileSuffix}." );
             if ( DumpVideo )
             {
-                Console.WriteLine( $"Video stream @{_kinectSensor.ColorFrameSource.FrameDescription.Width}x{_kinectSensor.ColorFrameSource.FrameDescription.Height} outputed in file {BaseOutputFile + ColorDataOutputFileSuffix}." );
+                Console.WriteLine( $"Video stream @{_kinectSource.ColorFrameDescription.Width}x{_kinectSource.ColorFrameDescription.Height} outputed in file {BaseOutputFile + ColorDataOutputFileSuffix}." );
             }
             Console.WriteLine( "Press X, Q or Control + C to stop capture." );
             Console.WriteLine();
 
             // write status in console every seconds
-            _fpsWatch = new FpsWatch();
             _timer = new Timer( o =>
             {
-                Console.Write( $"Acquiring at {_fpsWatch.GetFPS( true ):F1} fps." );
+                Console.Write( $"Acquiring at {_kinectSource.BodySourceFPS:F1} fps." );
                 Console.Write( $" Tracking {_bodyFrameDumper.BodyCount} body(ies)." );
                 Console.Write( "\r" );
             }, null, 1000, 1000 );
 
-            // open the sensor
-            _kinectSensor.Open();
+            // start capture
+            _kinectSource.Start();
 
             // wait for X, Q or Ctrl+C events to exit
-            Console.CancelKeyPress += (sender, args) => Terminate();
+            Console.CancelKeyPress += (sender, args) => Cleanup();
             while ( true )
             {
                 // Start a console read operation. Do not display the input.
@@ -113,53 +109,13 @@ namespace DumpKinectSkeleton
                     break;
                 }
             }
-            Terminate();
+            Cleanup();
         }
 
-        private void Terminate()
+        private void Cleanup()
         {
             Console.WriteLine( Environment.NewLine + $"{DateTime.Now:T}: Stopping capture" );
             Close();
-        }
-
-        /// <summary>
-        /// Initialize Kinect sensor with one multi frame reader.
-        /// </summary>
-        /// <param name="dumpBodies"></param>
-        /// <param name="dumpVideo"></param>
-        /// <returns></returns>
-        private bool InitializeKinect( bool dumpVideo )
-        {
-            _kinectSensor = KinectSensor.GetDefault();
-            if ( _kinectSensor == null )
-            {
-                Console.Error.WriteLine( "Error getting Kinect Sensor." );
-                return false;
-            }
-
-            var features = FrameSourceTypes.Body;
-            if ( dumpVideo )
-            {
-                features |= FrameSourceTypes.Color;
-            }
-
-            if ( features == FrameSourceTypes.None )
-            {
-                Console.Error.WriteLine( "No source selected." );
-                return false;
-            }
-
-            // open the reader for the body frames
-            _frameReader = _kinectSensor.OpenMultiSourceFrameReader( features );
-            if ( _frameReader == null )
-            {
-                Console.Error.WriteLine( "Error opening body frame reader." );
-                return false;
-            }
-
-            // register to frames
-            _frameReader.MultiSourceFrameArrived += FrameArrived;
-            return true;
         }
 
         /// <summary>
@@ -169,16 +125,10 @@ namespace DumpKinectSkeleton
         {
             _timer?.Change( Timeout.Infinite, Timeout.Infinite );
 
-            if ( _frameReader != null )
+            if ( _kinectSource != null )
             {
-                _frameReader.Dispose();
-                _frameReader = null;
-            }
-
-            if ( _kinectSensor != null )
-            {
-                _kinectSensor.Close();
-                _kinectSensor = null;
+                _kinectSource.Close();
+                _kinectSource = null;
             }
 
             if ( _bodyFrameDumper != null )
@@ -192,41 +142,11 @@ namespace DumpKinectSkeleton
                 _colorFrameDumper.Close();
                 _colorFrameDumper = null;
             }
-        }
+        }        
 
-        /// <summary>
-        /// Handles the body frame data arriving from the sensor
-        /// </summary>
-        /// <param name="sender">object sending the event</param>
-        /// <param name="evt">event arguments</param>
-        private void FrameArrived( object sender, MultiSourceFrameArrivedEventArgs evt )
+        private void Terminate()
         {
-            var frame = evt.FrameReference.AcquireFrame();
-            if ( frame == null ) return;
-
-            try
-            {
-                if ( _bodyFrameDumper != null )
-                {
-                    using ( var bodyFrame = frame.BodyFrameReference.AcquireFrame() )
-                    {
-                        _bodyFrameDumper.HandleBodyFrame( bodyFrame );
-                    }
-                }
-                if ( _colorFrameDumper != null )
-                {
-                    using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() )
-                    {
-                        _colorFrameDumper.HandleColorFrame( colorFrame );
-                    }
-                }
-                _fpsWatch.Tick();                
-            }
-            catch ( Exception e )
-            {
-                Console.Error.WriteLine( "Error: " + e.Message );
-                SendKeys.SendWait( "Q" );
-            }
+            SendKeys.SendWait( "Q" );
         }
 
         public static void Main( string[] args )

@@ -16,7 +16,7 @@ namespace DumpKinectSkeleton
         /// </summary>
         private Stream _colorOutputStream;
 
-        public ColorFrameDumper( string colorDataOutputFile )
+        public ColorFrameDumper( KinectSource kinectSource, string colorDataOutputFile )
         {
             // open file for output
             try
@@ -29,6 +29,7 @@ namespace DumpKinectSkeleton
                 Close();
                 throw;
             }
+            kinectSource.ColorFrameEvent += HandleColorFrame;
         }
 
         /// <summary>

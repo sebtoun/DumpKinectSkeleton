@@ -29,14 +29,15 @@ namespace DumpKinectSkeleton
         /// <summary>
         /// Create a new body frame dumper that dumps first tracked Body data to a csv file.
         /// </summary>
+        /// <param name="kinectSource"></param>
         /// <param name="outputFileName"></param>
-        public BodyFrameDumper(string outputFileName )
+        public BodyFrameDumper( KinectSource kinectSource, string outputFileName )
         {
             // open file for output
             try
             {
                 _bodyOutputStream = new StreamWriter( outputFileName );
-                
+
                 // write header
                 _bodyOutputStream.WriteLine(
                     "# timestamp, jointType, position.X, position.Y, position.Z, orientation.X, orientation.Y, orientation.Z, orientation.W, state" );
@@ -47,6 +48,7 @@ namespace DumpKinectSkeleton
                 Close();
                 throw;
             }
+            kinectSource.BodyFrameEvent += HandleBodyFrame;
         }
 
         /// <summary>
@@ -56,7 +58,7 @@ namespace DumpKinectSkeleton
         {
             BodyCount = 0;
             _bodyOutputStream?.Close();
-            _bodyOutputStream = null;            
+            _bodyOutputStream = null;
         }
 
         /// <summary>
@@ -71,10 +73,10 @@ namespace DumpKinectSkeleton
                 throw new InvalidOperationException( "BodyFrameDumper is closed." );
             }
             var time = frame.RelativeTime;
-            
+
             // lazy body buffer initialization
             if ( _bodies == null )
-            {                    
+            {
                 _bodies = new Body[ frame.BodyCount ];
             }
 
@@ -114,7 +116,7 @@ namespace DumpKinectSkeleton
                     Close();
                     throw;
                 }
-            }            
+            }
         }
 
         /// <summary>
@@ -139,7 +141,7 @@ namespace DumpKinectSkeleton
                     position.X, position.Y, position.Z,
                     orientation.X, orientation.Y, orientation.Z, orientation.W,
                     (int)joints[ jointType ].TrackingState ) );
-            }         
+            }
         }
     }
 }
