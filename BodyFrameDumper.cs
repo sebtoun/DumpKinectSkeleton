@@ -23,8 +23,7 @@ namespace DumpKinectSkeleton
         /// </summary>
         public int BodyCount { get; private set; }
 
-        private bool _dumpingStarted;
-        private TimeSpan _initialTime;
+        public TimeSpan InitialTime;
 
         /// <summary>
         /// Create a new body frame dumper that dumps first tracked Body data to a csv file.
@@ -49,6 +48,7 @@ namespace DumpKinectSkeleton
                 throw;
             }
             kinectSource.BodyFrameEvent += HandleBodyFrame;
+            kinectSource.FirstFrameRelativeTimeEvent += ts => InitialTime = ts;
         }
 
         /// <summary>
@@ -79,13 +79,7 @@ namespace DumpKinectSkeleton
             {
                 _bodies = new Body[ frame.BodyCount ];
             }
-
-            if ( !_dumpingStarted )
-            {
-                _initialTime = time;
-                _dumpingStarted = true;
-            }
-
+            
             // The first time GetAndRefreshBodyData is called, Kinect will allocate each Body in the array.
             // As long as those body objects are not disposed and not set to null in the array,
             // those body objects will be re-used.
@@ -108,7 +102,7 @@ namespace DumpKinectSkeleton
             {
                 try
                 {
-                    OutputBody( time - _initialTime, firstBody );
+                    OutputBody( time - InitialTime, firstBody );
                 }
                 catch ( Exception e )
                 {

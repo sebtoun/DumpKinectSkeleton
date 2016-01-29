@@ -18,13 +18,15 @@ You will need .Net framework 4.5 (available here : http://www.microsoft.com/en-u
 
 ## Usage
 
-```Usage: DumpKinectSkeleton [--help] [-v|--video] [--prefix PREFIX]
+```Usage: DumpKinectSkeleton [--help] [-v|--video] [-s|--synchronize] [--prefix PREFIX]
 
-  -v, --video        Dump color video stream data as a yuy2 raw format.
+  -v, --video          Dump color video stream data as a yuy2 raw format.
 
-  --prefix=PREFIX    (Default: output) Output files prefix.
+  -s, --synchronize    Synchronize streams.
 
-  --help             Display this help screen.```
+  --prefix=PREFIX      (Default: output) Output files prefix.
+
+  --help               Display this help screen.```
 
 Skeleton data is outputed to `<PREFIX>_body.csv` in commas separated values, video stream is outputed to `<PREFIX>_color.yuy2` in raw YUYV422 (a.k.a. YUY2) format.
 

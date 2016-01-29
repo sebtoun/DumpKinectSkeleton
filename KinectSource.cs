@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using Microsoft.Kinect;
 
 namespace DumpKinectSkeleton
@@ -14,30 +13,42 @@ namespace DumpKinectSkeleton
         /// <summary>
         /// Reader for multi sources sync'ed frames
         /// </summary>
-        private MultiSourceFrameReader _frameReader;
+        private MultiSourceFrameReader _multiFrameReader;
 
         /// <summary>
-        /// Compute body capture rate.
+        /// Reader for non sync'ed body frames
+        /// </summary>
+        private BodyFrameReader _bodyFrameReader;
+
+        /// <summary>
+        /// Reader for non sync'ed color frames
+        /// </summary>
+        private ColorFrameReader _colorFrameReader;
+
+        public bool FrameSync { get; set; }
+
+        /// <summary>
+        /// Compute body stream frame rate.
         /// </summary>
         private readonly FpsWatch _bodySourceFpsWatcher = new FpsWatch( 1 );
 
         /// <summary>
         /// Get the skeleton stream frame rate.
         /// </summary>
-        public double BodySourceFPS
+        public double BodySourceFps
         {
             get { return _bodySourceFpsWatcher.Value; }
         }
 
         /// <summary>
-        /// Compute color capture rate.
+        /// Compute color stream frame rate.
         /// </summary>
         private readonly FpsWatch _colorSourceFpsWatcher = new FpsWatch( 1 );
-        
+
         /// <summary>
         /// Get the color stream frame rate.
         /// </summary>
-        public double ColorSourceFPS
+        public double ColorSourceFps
         {
             get { return _colorSourceFpsWatcher.Value; }
         }
@@ -46,6 +57,14 @@ namespace DumpKinectSkeleton
         {
             get { return _kinectSensor.ColorFrameSource.FrameDescription; }
         }
+
+        /// <summary>
+        /// First Frame RelativeTime event handler delegate.
+        /// </summary>
+        public delegate void FirstFrameRelativeTimeEventHandler( TimeSpan firstRelativeTime );
+
+        private bool _firstFrameRelativeTimeEventFired;
+        public event FirstFrameRelativeTimeEventHandler FirstFrameRelativeTimeEvent;
 
         /// <summary>
         /// Frame processing exception event handler delegate.
@@ -57,11 +76,27 @@ namespace DumpKinectSkeleton
         /// Event fired when an exception occured during frames processing.
         /// </summary>
         public event FrameProcessExceptionEventHandler FrameProcessExceptionEvent;
-        
+
+        /// <summary>
+        /// Body frame processor event handler
+        /// </summary>
+        /// <param name="frame"></param>
         public delegate void BodyFrameEventHandler( BodyFrame frame );
+
+        /// <summary>
+        /// Event fired when a body frame is captured.
+        /// </summary>
         public event BodyFrameEventHandler BodyFrameEvent;
 
+        /// <summary>
+        /// Color frame processor event handler
+        /// </summary>
+        /// <param name="frame"></param>
         public delegate void ColorFrameEventHandler( ColorFrame frame );
+
+        /// <summary>
+        /// Event fired when a color frame is captured.
+        /// </summary>
         public event ColorFrameEventHandler ColorFrameEvent;
 
         /// <summary>
@@ -77,12 +112,22 @@ namespace DumpKinectSkeleton
             }
         }
 
+        private void OnFirstFrameRelativeTimeEvent( TimeSpan firstRelativeTime )
+        {
+            if ( FirstFrameRelativeTimeEvent != null )
+            {
+                FirstFrameRelativeTimeEvent( firstRelativeTime );
+                _firstFrameRelativeTimeEventFired = true;
+            }
+        }
+
         /// <summary>
-        /// Handles the body frame data arriving from the sensor
+        /// Handles the body frame data arriving from the multi frame reader.
+        /// Dispatch each frames to corresponding processors and Dispose them.
         /// </summary>
         /// <param name="sender">object sending the event</param>
         /// <param name="evt">event arguments</param>
-        private void FrameArrived( object sender, MultiSourceFrameArrivedEventArgs evt )
+        private void MultiFrameArrived( object sender, MultiSourceFrameArrivedEventArgs evt )
         {
             var frame = evt.FrameReference.AcquireFrame();
             if ( frame == null ) return;
@@ -93,6 +138,10 @@ namespace DumpKinectSkeleton
                 {
                     using ( var bodyFrame = frame.BodyFrameReference.AcquireFrame() )
                     {
+                        if ( !_firstFrameRelativeTimeEventFired )
+                        {
+                            OnFirstFrameRelativeTimeEvent( bodyFrame.RelativeTime );
+                        }
                         BodyFrameEvent( bodyFrame );
                     }
                 }
@@ -101,6 +150,10 @@ namespace DumpKinectSkeleton
                 {
                     using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() )
                     {
+                        if ( !_firstFrameRelativeTimeEventFired )
+                        {
+                            OnFirstFrameRelativeTimeEvent( colorFrame.RelativeTime );
+                        }
                         ColorFrameEvent( colorFrame );
                     }
                 }
@@ -116,20 +169,66 @@ namespace DumpKinectSkeleton
         }
 
         /// <summary>
-        /// Close opened reader and sensors.
+        /// Handle body frame arrived from dedicated Color frames reader. 
+        /// Send frame to all registered processors and Dispose it.
         /// </summary>
-        public void Close()
+        /// <param name="sender"></param>
+        /// <param name="evt"></param>
+        private void BodyFrameArrived( object sender, BodyFrameArrivedEventArgs evt )
         {
-            if ( _frameReader != null )
+            try
             {
-                _frameReader.Dispose();
-                _frameReader = null;
+                if ( BodyFrameEvent != null )
+                {
+                    using ( var bodyFrame = evt.FrameReference.AcquireFrame() )
+                    {
+                        if ( !_firstFrameRelativeTimeEventFired )
+                        {
+                            OnFirstFrameRelativeTimeEvent( bodyFrame.RelativeTime );
+                        }
+                        BodyFrameEvent( bodyFrame );
+                    }
+                }
+                _bodySourceFpsWatcher.Tick();
             }
-
-            if ( _kinectSensor != null )
+            catch ( Exception e )
             {
-                _kinectSensor.Close();
-                _kinectSensor = null;
+                if ( FrameProcessExceptionEvent != null )
+                {
+                    FrameProcessExceptionEvent( e );
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handle color frame arrived from dedicated Color frames reader. 
+        /// Send frame to all registered processors and Dispose it.
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="evt"></param>
+        private void ColorFrameArrived( object sender, ColorFrameArrivedEventArgs evt )
+        {
+            try
+            {
+                if ( ColorFrameEvent != null )
+                {
+                    using ( var colorFrame = evt.FrameReference.AcquireFrame() )
+                    {
+                        if ( !_firstFrameRelativeTimeEventFired )
+                        {
+                            OnFirstFrameRelativeTimeEvent( colorFrame.RelativeTime );
+                        }
+                        ColorFrameEvent( colorFrame );
+                    }
+                }
+                _colorSourceFpsWatcher.Tick();
+            }
+            catch ( Exception e )
+            {
+                if ( FrameProcessExceptionEvent != null )
+                {
+                    FrameProcessExceptionEvent( e );
+                }
             }
         }
 
@@ -138,28 +237,107 @@ namespace DumpKinectSkeleton
         /// </summary>
         public void Start()
         {
-            var features = FrameSourceTypes.None;
-            if ( BodyFrameEvent != null )
+            if ( FrameSync )
             {
-                features |= FrameSourceTypes.Body;
+                // open streams using a synchronized readers, the frame rate is equal to the lowest of each separated stream.
+                // select which streams to enable
+                var features = FrameSourceTypes.None;
+                if ( BodyFrameEvent != null )
+                {
+                    features |= FrameSourceTypes.Body;
+                }
+                if ( ColorFrameEvent != null )
+                {
+                    features |= FrameSourceTypes.Color;
+                }
+                if ( features == FrameSourceTypes.None )
+                {
+                    throw new ApplicationException( "No event processor registered." );
+                }
+                // check reader state
+                if ( _multiFrameReader != null )
+                {
+                    throw new InvalidOperationException( "Kinect already started." );
+                }
+                // open the reader
+                _multiFrameReader = _kinectSensor.OpenMultiSourceFrameReader( features );
+                if ( _multiFrameReader == null )
+                {
+                    Close();
+                    throw new ApplicationException( "Error opening readers." );
+                }
+
+                // register to frames
+                _multiFrameReader.MultiSourceFrameArrived += MultiFrameArrived;
             }
-            if ( ColorFrameEvent != null )
+            else
             {
-                features |= FrameSourceTypes.Color;
+                // open streams using separate readers, each one with the highest frame rate possible.
+                // open body reader
+                if ( BodyFrameEvent != null )
+                {
+                    if ( _bodyFrameReader != null )
+                    {
+                        throw new InvalidOperationException( "Kinect already started." );
+                    }
+                    _bodyFrameReader = _kinectSensor.BodyFrameSource.OpenReader();
+                    if ( _bodyFrameReader == null )
+                    {
+                        Close();
+                        throw new ApplicationException( "Error opening readers." );
+                    }
+                    _bodyFrameReader.FrameArrived += BodyFrameArrived;
+                }
+                // open color stream reader
+                if ( ColorFrameEvent != null )
+                {
+                    if ( _colorFrameReader != null )
+                    {
+                        throw new InvalidOperationException( "Kinect already started." );
+                    }
+                    _colorFrameReader = _kinectSensor.ColorFrameSource.OpenReader();
+                    if ( _colorFrameReader == null )
+                    {
+                        Close();
+                        throw new ApplicationException( "Error opening readers." );
+                    }
+                    _colorFrameReader.FrameArrived += ColorFrameArrived;
+                }
             }
-
-            // open the reader for the body frames
-            _frameReader = _kinectSensor.OpenMultiSourceFrameReader( features );
-            if ( _frameReader == null )
-            {
-                Close();
-                throw new ApplicationException( "Error opening readers." );
-            }
-
-            // register to frames
-            _frameReader.MultiSourceFrameArrived += FrameArrived;
-
+            _firstFrameRelativeTimeEventFired = false;
             _kinectSensor.Open();
+        }
+
+        /// <summary>
+        /// Close opened reader and sensors.
+        /// </summary>
+        public void Close()
+        {
+            if ( _multiFrameReader != null )
+            {
+                _multiFrameReader.MultiSourceFrameArrived -= MultiFrameArrived;
+                _multiFrameReader.Dispose();
+                _multiFrameReader = null;
+            }
+
+            if ( _colorFrameReader != null )
+            {
+                _colorFrameReader.FrameArrived -= ColorFrameArrived;
+                _colorFrameReader.Dispose();
+                _colorFrameReader = null;
+            }
+
+            if ( _bodyFrameReader != null )
+            {
+                _bodyFrameReader.FrameArrived -= BodyFrameArrived;
+                _bodyFrameReader.Dispose();
+                _bodyFrameReader = null;
+            }
+
+            if ( _kinectSensor != null )
+            {
+                _kinectSensor.Close();
+            }
         }
     }
 }

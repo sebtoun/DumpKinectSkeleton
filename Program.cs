@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Threading;
 using System.Windows.Forms;
-using Microsoft.Kinect;
 using CommandLine;
 using CommandLine.Text;
 using Timer = System.Threading.Timer;
@@ -33,13 +32,16 @@ namespace DumpKinectSkeleton
         [Option( 'v', "video", HelpText = "Dump color video stream data as a yuy2 raw format." )]
         public bool DumpVideo { get; set; }
 
+        [Option( 's', "synchronize", HelpText = "Synchronize streams." )]
+        public bool Synchronize { get; set; }
+
         [Option( "prefix", DefaultValue = "output", MetaValue = "PREFIX", HelpText = "Output files prefix." )]
         public string BaseOutputFile { get; set; }
 
         [HelpOption]
         public string GetUsage()
         {
-            return HelpText.AutoBuild( this, ( HelpText current ) => HelpText.DefaultParsingErrorsHandler( this, current ) );
+            return HelpText.AutoBuild( this, current => HelpText.DefaultParsingErrorsHandler( this, current ) );
         }
 
         public void Run()
@@ -47,6 +49,7 @@ namespace DumpKinectSkeleton
             try
             {
                 _kinectSource = new KinectSource();
+                _kinectSource.FrameSync = Synchronize;
                 _kinectSource.FrameProcessExceptionEvent += e =>
                 {
                     Console.Error.WriteLine( "Error: " + e.Message );
@@ -76,26 +79,30 @@ namespace DumpKinectSkeleton
                 return;
             }
 
-            Console.WriteLine( "Starting capture." );
-            Console.WriteLine( $"Ouput skeleton data in file {BaseOutputFile + BodyDataOutputFileSuffix}." );
+            Console.WriteLine( "Starting capture" );
+            Console.WriteLine( $"Ouput skeleton data in file {BaseOutputFile + BodyDataOutputFileSuffix}" );
             if ( DumpVideo )
             {
-                Console.WriteLine( $"Video stream @{_kinectSource.ColorFrameDescription.Width}x{_kinectSource.ColorFrameDescription.Height} outputed in file {BaseOutputFile + ColorDataOutputFileSuffix}." );
+                Console.WriteLine( $"Video stream @{_kinectSource.ColorFrameDescription.Width}x{_kinectSource.ColorFrameDescription.Height} outputed in file {BaseOutputFile + ColorDataOutputFileSuffix}" );
             }
-            Console.WriteLine( "Press X, Q or Control + C to stop capture." );
+            Console.WriteLine( "Press X, Q or Control + C to stop capture" );
             Console.WriteLine();
 
+            Console.WriteLine( "Capture rate(s):" );
             // write status in console every seconds
             _timer = new Timer( o =>
             {
-                Console.Write( $"Acquiring at {_kinectSource.BodySourceFPS:F1} fps." );
-                Console.Write( $" Tracking {_bodyFrameDumper.BodyCount} body(ies)." );
+                Console.Write( $"{_bodyFrameDumper.BodyCount} Skeleton(s) @ { _kinectSource.BodySourceFps:F1} Fps" );
+                if ( DumpVideo )
+                {
+                    Console.Write( $" - Color Frames @ { _kinectSource.ColorSourceFps:F1} Fps" );
+                }
                 Console.Write( "\r" );
             }, null, 1000, 1000 );
 
             // start capture
             _kinectSource.Start();
-
+            
             // wait for X, Q or Ctrl+C events to exit
             Console.CancelKeyPress += (sender, args) => Cleanup();
             while ( true )
@@ -114,7 +121,7 @@ namespace DumpKinectSkeleton
 
         private void Cleanup()
         {
-            Console.WriteLine( Environment.NewLine + $"{DateTime.Now:T}: Stopping capture" );
+            Console.WriteLine( Environment.NewLine + $"Stopping capture" );
             Close();
         }
 
@@ -152,7 +159,7 @@ namespace DumpKinectSkeleton
         public static void Main( string[] args )
         {
             var main = new Program();
-            if ( CommandLine.Parser.Default.ParseArguments( args, main ) )
+            if ( Parser.Default.ParseArguments( args, main ) )
             {
                 main.Run();
             }

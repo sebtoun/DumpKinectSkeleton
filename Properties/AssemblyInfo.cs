@@ -1,5 +1,4 @@
 ﻿using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using CommandLine;
 
@@ -33,16 +32,16 @@ using CommandLine;
 // Vous pouvez spécifier toutes les valeurs ou indiquer les numéros de build et de révision par défaut 
 // en utilisant '*', comme indiqué ci-dessous :
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion( "2.1.*" )]
-[assembly: AssemblyFileVersion( "2.1.*" )]
+[assembly: AssemblyVersion( "3.0.*" )]
+[assembly: AssemblyFileVersion( "3.0.*" )]
 
 
 // from .NET class library
-[assembly: AssemblyInformationalVersionAttribute( "2.1" )]
+[assembly: AssemblyInformationalVersionAttribute( "3.0" )]
 
 // from CommandLineParser.Text
 [assembly: AssemblyLicense(
     "This is free software. You may redistribute copies of it under the terms of",
     "the MIT License <http://www.opensource.org/licenses/mit-license.php>." )]
 [assembly: AssemblyUsage(
-    "Usage: DumpKinectSkeleton [--help] [-v|--video] [--prefix PREFIX]" )]
+    "Usage: DumpKinectSkeleton [--help] [-v|--video] [-s|--synchronize] [--prefix PREFIX]" )]
