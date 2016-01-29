@@ -72,7 +72,7 @@ namespace DumpKinectSkeleton
             catch ( Exception e )
             {
                 Console.Error.WriteLine( "Error preparing dumpers: " + e.Message );
-                Close();
+                Cleanup();
                 return;
             }
 
