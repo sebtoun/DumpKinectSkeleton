@@ -18,7 +18,7 @@ Skeleton data is outputed to `<PREFIX>_body.csv` in commas separated values in t
 
 ### Video data
 
-Video stream is outputed to `<PREFIX>_color.yuy2` in raw uncompressed YUYV422 (a.k.a. YUY2) format at a 1080p resolution. Beware that the video file grow very fast.
+Video stream is outputed to `<PREFIX>_color.yuy2` in raw uncompressed YUYV422 (a.k.a. YUY2) format at a 1080p resolution. Beware that the video file grows very fast.
 
 
 ## Requirements
