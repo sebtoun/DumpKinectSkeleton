@@ -35,7 +35,7 @@ namespace DumpKinectSkeleton
             // open file for output
             try
             {
-                _bodyOutputStream = new StreamWriter( outputFileName );
+                _bodyOutputStream = new StreamWriter( new BufferedStream( new FileStream( outputFileName, FileMode.Create ) ) );
 
                 // write header
                 _bodyOutputStream.WriteLine(

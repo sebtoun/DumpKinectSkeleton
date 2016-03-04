@@ -21,7 +21,7 @@ namespace DumpKinectSkeleton
             // open file for output
             try
             {
-                _colorOutputStream = new FileStream( colorDataOutputFile, FileMode.Create );
+                _colorOutputStream = new BufferedStream( new FileStream( colorDataOutputFile, FileMode.Create ) );
             }
             catch ( Exception e )
             {
