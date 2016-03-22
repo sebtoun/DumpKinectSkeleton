@@ -3,6 +3,7 @@ using System.Threading;
 using System.Windows.Forms;
 using CommandLine;
 using CommandLine.Text;
+using DumpKinectSkeletonLib;
 using Timer = System.Threading.Timer;
 
 namespace DumpKinectSkeleton
